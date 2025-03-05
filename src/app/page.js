@@ -1,101 +1,139 @@
-import Image from "next/image";
+"use client"
+import { useEffect, useRef, useState } from 'react';
+import styles from './page.module.css';
 
 export default function Home() {
-  return (
-    <div className="grid grid-rows-[20px_1fr_20px] items-center justify-items-center min-h-screen p-8 pb-20 gap-16 sm:p-20 font-[family-name:var(--font-geist-sans)]">
-      <main className="flex flex-col gap-8 row-start-2 items-center sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={180}
-          height={38}
-          priority
-        />
-        <ol className="list-inside list-decimal text-sm text-center sm:text-left font-[family-name:var(--font-geist-mono)]">
-          <li className="mb-2">
-            Get started by editing{" "}
-            <code className="bg-black/[.05] dark:bg-white/[.06] px-1 py-0.5 rounded font-semibold">
-              src/app/page.js
-            </code>
-            .
-          </li>
-          <li>Save and see your changes instantly.</li>
-        </ol>
+  const webSocketRef = useRef(null);
+  const pcRef = useRef(null);
+  const streamRef = useRef(null);
+  const [status, setStatus] = useState('Disconnected');
 
-        <div className="flex gap-4 items-center flex-col sm:flex-row">
-          <a
-            className="rounded-full border border-solid border-transparent transition-colors flex items-center justify-center bg-foreground text-background gap-2 hover:bg-[#383838] dark:hover:bg-[#ccc] text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={20}
-              height={20}
-            />
-            Deploy now
-          </a>
-          <a
-            className="rounded-full border border-solid border-black/[.08] dark:border-white/[.145] transition-colors flex items-center justify-center hover:bg-[#f2f2f2] dark:hover:bg-[#1a1a1a] hover:border-transparent text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5 sm:min-w-44"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Read our docs
-          </a>
-        </div>
-      </main>
-      <footer className="row-start-3 flex gap-6 flex-wrap items-center justify-center">
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/file.svg"
-            alt="File icon"
-            width={16}
-            height={16}
-          />
-          Learn
-        </a>
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/window.svg"
-            alt="Window icon"
-            width={16}
-            height={16}
-          />
-          Examples
-        </a>
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://nextjs.org?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/globe.svg"
-            alt="Globe icon"
-            width={16}
-            height={16}
-          />
-          Go to nextjs.org →
-        </a>
-      </footer>
+  useEffect(() => {
+    // Setup WebRTC connection
+    const setupConnection = async () => {
+      try {
+        setStatus('Setting up audio...');
+        
+        // Get user media (audio only)
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        streamRef.current = stream;
+        setStatus('Microphone access granted');
+        
+        // Create WebSocket connection to Python backend
+        const ws = new WebSocket('wss://localhost:8765');
+        webSocketRef.current = ws;
+        
+        ws.onopen = () => {
+          setStatus('WebSocket connected');
+          setupWebRTC();
+        };
+        
+        ws.onmessage = async (event) => {
+          const message = JSON.parse(event.data);
+          handleSignalingMessage(message);
+        };
+        
+        ws.onerror = (error) => {
+          console.error('WebSocket error:', error);
+          setStatus('Connection error');
+        };
+        
+        ws.onclose = () => {
+          setStatus('Connection closed');
+        };
+      } catch (err) {
+        console.error('Setup error:', err);
+        setStatus(`Error: ${err.message}`);
+      }
+    };
+    
+    const setupWebRTC = () => {
+      // Create RTCPeerConnection
+      const pc = new RTCPeerConnection({
+        iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
+      });
+      pcRef.current = pc;
+      setStatus('WebRTC connection created');
+      
+      // Add local audio tracks to connection
+      const stream = streamRef.current;
+      stream.getAudioTracks().forEach(track => {
+        pc.addTrack(track, stream);
+        console.log('Added audio track to connection');
+      });
+      
+      // Handle ICE candidates
+      pc.onicecandidate = ({ candidate }) => {
+        if (candidate) {
+          const message = {
+            type: 'candidate',
+            candidate
+          };
+          webSocketRef.current.send(JSON.stringify(message));
+        }
+      };
+      
+      pc.oniceconnectionstatechange = () => {
+        setStatus(`ICE Connection: ${pc.iceConnectionState}`);
+      };
+      
+      // Create and send offer
+      createAndSendOffer();
+    };
+    
+    const createAndSendOffer = async () => {
+      try {
+        const pc = pcRef.current;
+        const offer = await pc.createOffer();
+        await pc.setLocalDescription(offer);
+        
+        const message = {
+          type: 'offer',
+          sdp: pc.localDescription.sdp
+        };
+        
+        webSocketRef.current.send(JSON.stringify(message));
+        setStatus('Offer sent');
+      } catch (err) {
+        console.error('Error creating offer:', err);
+        setStatus(`Offer error: ${err.message}`);
+      }
+    };
+    
+    const handleSignalingMessage = async (message) => {
+      try {
+        if (message.type === 'answer') {
+          const answer = new RTCSessionDescription({
+            type: message.type,
+            sdp: message.sdp
+          });
+          
+          await pcRef.current.setRemoteDescription(answer);
+          setStatus('Connected - You can speak now');
+        }
+      } catch (err) {
+        console.error('Signaling error:', err);
+        setStatus(`Signaling error: ${err.message}`);
+      }
+    };
+    
+    setupConnection();
+    
+    // Cleanup
+    return () => {
+      streamRef.current?.getTracks().forEach(track => track.stop());
+      pcRef.current?.close();
+      webSocketRef.current?.close();
+    };
+  }, []);
+  
+  return (
+    <div className={styles.container || ''}>
+      <h1>Audio Streaming to Python</h1>
+      <div className={styles.status || ''}>
+        Status: {status}
+      </div>
+      <p>Speak into your microphone to stream audio to the Python backend</p>
     </div>
   );
 }
