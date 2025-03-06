@@ -1,6 +1,6 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
-import React = require("react");
+import React from "react";
 import { InterviewWebSocket, InterviewConfig, InterviewScore } from "@/lib/interview-ws";
 
 export default function InterviewAssistant() {
