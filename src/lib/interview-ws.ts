@@ -3,6 +3,7 @@ export interface InterviewConfig {
   resume_pdf?: string;
   number_of_ques?: number;
   difficulty?: "easy" | "medium" | "hard";
+  language?: "english" | "hindi";
 }
 
 export interface InterviewScore {
@@ -15,6 +16,7 @@ export interface InterviewResponse {
   status?: string;
   message?: string;
   history?: InterviewScore[];
+  language?: string;
 }
 
 export type InterviewEventListener = (message: string) => void;
@@ -32,6 +34,10 @@ export class InterviewWebSocket {
   private onStatusChangeListeners: ((status: string) => void)[] = [];
   private onErrorListeners: ((error: string) => void)[] = [];
   private onAnalysisListeners: ((analysis: string, scores?: InterviewScore[]) => void)[] = [];
+  private onLanguagePromptListeners: ((options: string[]) => void)[] = [];
+  private isWaitingForAnalysis = false;
+  private analysisTimeout: NodeJS.Timeout | null = null;
+  private selectedLanguage: string = "english";
 
   constructor(private serverUrl: string = "ws://localhost:8765") {}
 
@@ -50,8 +56,17 @@ export class InterviewWebSocket {
   public addAnalysisListener(listener: (analysis: string, scores?: InterviewScore[]) => void): void {
     this.onAnalysisListeners.push(listener);
   }
+  
+  public addLanguagePromptListener(listener: (options: string[]) => void): void {
+    this.onLanguagePromptListeners.push(listener);
+  }
 
   public configure(config: InterviewConfig): Promise<void> {
+    // Store language preference if provided in config
+    if (config.language) {
+      this.selectedLanguage = config.language;
+    }
+    
     return new Promise((resolve, reject) => {
       try {
         this.ws = new WebSocket(this.serverUrl);
@@ -71,11 +86,29 @@ export class InterviewWebSocket {
         };
         
         this.ws.onmessage = (event) => {
+          console.log("Received message:", event.data);
           if (typeof event.data === "string") {
             try {
               // Handle JSON status messages
               const jsonData = JSON.parse(event.data);
-              if (jsonData.status === "ready") {
+              console.log("Received JSON message:", jsonData);
+              
+              // Handle language selection prompt
+              if (jsonData.status === "language_selection") {
+                console.log("Language selection prompt received:", jsonData);
+                if (jsonData.options && Array.isArray(jsonData.options)) {
+                  this.notifyLanguagePrompt(jsonData.options);
+                }
+                this.notifyMessage(jsonData.message || "Please select a language");
+                // Don't resolve the promise yet, wait for language selection
+              }
+              else if (jsonData.status === "ready") {
+                // Store language if provided
+                if (jsonData.language) {
+                  this.selectedLanguage = jsonData.language;
+                  console.log(`Language set to: ${this.selectedLanguage}`);
+                }
+                
                 this.isConfigured = true;
                 this.notifyStatusChange("ready");
                 resolve();
@@ -83,18 +116,43 @@ export class InterviewWebSocket {
                 this.notifyError(jsonData.message);
                 reject(new Error(jsonData.message));
               } else if (jsonData.status === "goodbye") {
+                console.log("Interview complete:", jsonData.message);
                 this.isConfigured = false;
                 this.notifyStatusChange("complete");
                 this.notifyMessage(`✨ ${jsonData.message}`);
                 
+                // If language is provided in the goodbye message, update it
+                if (jsonData.language) {
+                  this.selectedLanguage = jsonData.language;
+                }
+                
                 // Handle analysis data if available
                 if (jsonData.history) {
-                  this.notifyAnalysis(jsonData.message, jsonData.history);
+                  console.log("Received history data:", jsonData.history);
+                  // Ensure all history items have required fields
+                  const processedHistory = jsonData.history.map((item: any) => ({
+                    role: item.role || "system",
+                    content: item.content || "",
+                    score: item.score
+                  }));
+                  this.notifyAnalysis(jsonData.message, processedHistory);
                 }
+
+                // Clear analysis state when goodbye is received
+                this.clearAnalysisState();
+                
+                // Don't disconnect immediately to allow processing of the final messages
+                setTimeout(() => this.disconnect(), 1000);
               }
             } catch (e) {
               // If not JSON, treat as regular response
               this.notifyMessage(event.data);
+              
+              // This could be the analysis insight text
+              if (this.isWaitingForAnalysis) {
+                // Keep connection open for the goodbye message
+                console.log("Received analysis text");
+              }
             }
           }
         };
@@ -111,6 +169,24 @@ export class InterviewWebSocket {
         reject(error);
       }
     });
+  }
+  
+  // Send language preference to the server
+  public selectLanguage(language: string): void {
+    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+      this.selectedLanguage = language.toLowerCase();
+      this.ws.send(JSON.stringify({
+        type: "LANGUAGE_SELECTION",
+        language: this.selectedLanguage
+      }));
+      console.log(`Language preference sent: ${this.selectedLanguage}`);
+    } else {
+      console.error("Cannot send language preference: connection not open");
+    }
+  }
+  
+  public getSelectedLanguage(): string {
+    return this.selectedLanguage;
   }
 
   public async startRecording(): Promise<void> {
@@ -218,23 +294,33 @@ export class InterviewWebSocket {
 
   public requestAnalysis(): void {
     if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+      this.isWaitingForAnalysis = true;
       this.ws.send(JSON.stringify({ type: "ANALYSIS" }));
       this.notifyMessage("Requesting analysis of the interview...");
+      
+      // Set a timeout to handle cases where server doesn't respond
+      this.analysisTimeout = setTimeout(() => {
+        if (this.isWaitingForAnalysis) {
+          this.notifyError("Analysis request timed out");
+          this.isWaitingForAnalysis = false;
+        }
+      }, 20000); // 20-second timeout
     } else {
       this.notifyError("Cannot request analysis: connection is not open");
     }
   }
 
   public disconnect(): void {
+    this.clearAnalysisState();
     this.stopRecording();
     
     // Close WebSocket connection
     if (this.ws) {
+      // Don't reset isConfigured here, let the component handle that
       this.ws.close();
       this.ws = null;
     }
     
-    this.isConfigured = false;
     this.notifyStatusChange("disconnected");
     console.log("Disconnected, all resources cleaned up");
   }
@@ -265,5 +351,19 @@ export class InterviewWebSocket {
 
   private notifyAnalysis(message: string, scores?: InterviewScore[]): void {
     this.onAnalysisListeners.forEach(listener => listener(message, scores));
+  }
+  
+  private notifyLanguagePrompt(options: string[]): void {
+    this.onLanguagePromptListeners.forEach(listener => listener(options));
+  }
+
+  private clearAnalysisState(): void {
+    if (this.isWaitingForAnalysis) {
+      this.isWaitingForAnalysis = false;
+      if (this.analysisTimeout) {
+        clearTimeout(this.analysisTimeout);
+        this.analysisTimeout = null;
+      }
+    }
   }
 }
