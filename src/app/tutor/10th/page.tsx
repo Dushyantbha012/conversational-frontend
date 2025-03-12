@@ -2,6 +2,7 @@
 import { useEffect, useRef, useState } from "react";
 import React from "react";
 import { TutorWebSocket } from "@/lib/tutor/10th/tutor-ws";
+import Image from "next/image";
 
 export default function NCERTTutor() {
   const [isRecording, setIsRecording] = useState<boolean>(false);
@@ -10,9 +11,15 @@ export default function NCERTTutor() {
   const [textQuestion, setTextQuestion] = useState<string>("");
   const [connectionStatus, setConnectionStatus] = useState<string>("disconnected");
   const [isMicMuted, setIsMicMuted] = useState<boolean>(false);
+  const [imageFile, setImageFile] = useState<File | null>(null);
+  const [imagePreview, setImagePreview] = useState<string | null>(null);
+  const [remainingImages, setRemainingImages] = useState<number>(5);
+  const [isProcessingImage, setIsProcessingImage] = useState<boolean>(false);
+  const [imageDescription, setImageDescription] = useState<string | null>(null);
 
   const tutorWsRef = useRef<TutorWebSocket | null>(null);
   const responseEndRef = useRef<HTMLDivElement | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
   
   // Initialize tutor WebSocket instance
   useEffect(() => {
@@ -31,6 +38,8 @@ export default function NCERTTutor() {
       } else if (status === "disconnected") {
         setIsConnected(false);
         setIsRecording(false);
+      } else if (status === "processing_image") {
+        setIsProcessingImage(true);
       }
     });
     
@@ -40,6 +49,11 @@ export default function NCERTTutor() {
     
     tutorWsRef.current.addExplanationListener((question, explanation) => {
       // Optional: Add specific handling for explanations beyond the general message listener
+    });
+    
+    tutorWsRef.current.addImageProcessedListener((description) => {
+      setImageDescription(description);
+      setIsProcessingImage(false);
     });
     
     return () => {
@@ -57,10 +71,18 @@ export default function NCERTTutor() {
     }
   }, [responses]);
 
+  useEffect(() => {
+    // Update remaining images count when tutorWs changes
+    if (tutorWsRef.current) {
+      setRemainingImages(tutorWsRef.current.remainingImages);
+    }
+  }, [responses, isConnected]);
+
   const connectToTutor = async () => {
     try {
       if (tutorWsRef.current) {
         await tutorWsRef.current.connect();
+        setRemainingImages(5); // Reset image count on new connection
       }
     } catch (error) {
       console.error("Error connecting to tutor:", error);
@@ -125,9 +147,59 @@ export default function NCERTTutor() {
     setResponses([]);
   };
 
+  const clearHistory = () => {
+    if (tutorWsRef.current) {
+      tutorWsRef.current.clearHistory();
+    }
+  };
+
   const disconnect = () => {
     if (tutorWsRef.current) {
       tutorWsRef.current.disconnect();
+      // Reset states
+      setImageFile(null);
+      setImagePreview(null);
+      setImageDescription(null);
+      setRemainingImages(5);
+    }
+  };
+
+  const handleImageChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      setImageFile(file);
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        setImagePreview(reader.result as string);
+      };
+      reader.readAsDataURL(file);
+    }
+  };
+
+  const uploadImage = async () => {
+    if (!imageFile || !imagePreview || !tutorWsRef.current) return;
+    
+    try {
+      // Simple direct approach - using the data URL from preview
+      const success = tutorWsRef.current.sendImage(imagePreview);
+      
+      if (success) {
+        setImageFile(null);
+        if (fileInputRef.current) {
+          fileInputRef.current.value = "";
+        }
+        setRemainingImages(tutorWsRef.current.remainingImages);
+      }
+    } catch (error) {
+      console.error("Error uploading image:", error);
+    }
+  };
+
+  const cancelImageUpload = () => {
+    setImageFile(null);
+    setImagePreview(null);
+    if (fileInputRef.current) {
+      fileInputRef.current.value = "";
     }
   };
 
@@ -148,7 +220,7 @@ export default function NCERTTutor() {
             </button>
           ) : (
             <>
-              <div className="flex justify-between items-center mb-4">
+              <div className="flex justify-between items-center mb-4 flex-wrap gap-2">
                 <button 
                   onClick={toggleRecording}
                   className={`px-4 py-2 rounded-md font-medium text-white ${
@@ -176,6 +248,13 @@ export default function NCERTTutor() {
                 </button>
                 
                 <button
+                  onClick={clearHistory}
+                  className="px-4 py-2 rounded-md font-medium text-white bg-indigo-500 hover:bg-indigo-600"
+                >
+                  Reset Memory
+                </button>
+                
+                <button
                   onClick={disconnect}
                   className="px-4 py-2 rounded-md font-medium text-white bg-gray-700 hover:bg-gray-800"
                 >
@@ -192,6 +271,72 @@ export default function NCERTTutor() {
                     : "Click 'Start Voice Input' to ask questions by voice."}
                 </p>
                 <p className="text-sm text-gray-500 mt-1">Status: {connectionStatus}</p>
+              </div>
+              
+              {/* Image upload section */}
+              <div className="border border-gray-300 rounded-md p-4 mb-4">
+                <h3 className="font-medium mb-2">Image Analysis</h3>
+                <p className="text-sm text-gray-500 mb-2">
+                  Upload an image of a textbook page, diagram, or problem to analyze (Max: {remainingImages} images remaining)
+                </p>
+                
+                <div className="flex items-center gap-2">
+                  <input
+                    type="file"
+                    ref={fileInputRef}
+                    accept="image/*"
+                    onChange={handleImageChange}
+                    className="block w-full text-sm text-gray-500
+                      file:mr-4 file:py-2 file:px-4
+                      file:rounded-md file:border-0
+                      file:text-sm file:font-semibold
+                      file:bg-blue-50 file:text-blue-700
+                      hover:file:bg-blue-100"
+                    disabled={remainingImages <= 0 || isProcessingImage}
+                  />
+                  
+                  {remainingImages <= 0 && (
+                    <span className="text-xs text-red-500">Image limit reached</span>
+                  )}
+                </div>
+                
+                {imagePreview && (
+                  <div className="mt-4">
+                    <div className="relative max-w-xs mx-auto">
+                      <img 
+                        src={imagePreview} 
+                        alt="Preview" 
+                        className="w-full object-contain border rounded-md max-h-48"
+                      />
+                    </div>
+                    <div className="flex justify-center gap-2 mt-2">
+                      <button
+                        onClick={uploadImage}
+                        disabled={isProcessingImage || remainingImages <= 0}
+                        className={`px-3 py-1 rounded text-sm text-white ${
+                          isProcessingImage || remainingImages <= 0
+                            ? "bg-gray-400"
+                            : "bg-green-600 hover:bg-green-700"
+                        }`}
+                      >
+                        {isProcessingImage ? "Processing..." : "Analyze Image"}
+                      </button>
+                      <button
+                        onClick={cancelImageUpload}
+                        className="px-3 py-1 rounded text-sm text-white bg-gray-600 hover:bg-gray-700"
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  </div>
+                )}
+                
+                {isProcessingImage && (
+                  <div className="flex items-center justify-center mt-4">
+                    <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-blue-500"></div>
+                    <span className="ml-2 text-sm text-gray-600">Processing image...</span>
+                  </div>
+                )}
               </div>
               
               <div className="relative">
@@ -230,6 +375,15 @@ export default function NCERTTutor() {
                   ) : response.startsWith("Error:") ? (
                     <div className="bg-red-50 p-3 rounded-lg">
                       <p className="whitespace-pre-wrap text-red-800">{response}</p>
+                    </div>
+                  ) : response.startsWith("Image processed:") ? (
+                    <div className="bg-purple-50 p-3 rounded-lg">
+                      <p className="font-medium text-gray-900">Image Analysis:</p>
+                      <p className="whitespace-pre-wrap text-gray-800">{response}</p>
+                    </div>
+                  ) : response.startsWith("Sending image") ? (
+                    <div className="bg-blue-50 p-3 rounded-lg max-w-[80%] ml-auto">
+                      <p className="whitespace-pre-wrap text-gray-800">{response}</p>
                     </div>
                   ) : response.startsWith("Q:") ? (
                     <div className="space-y-2">

@@ -4,10 +4,13 @@ export interface TutorResponse {
   explanation?: string;
   message?: string;
   status?: string;
+  description?: string;
+  conversation_length?: number;
 }
 
 export type TutorEventListener = (message: string) => void;
 export type TutorExplanationListener = (question: string, explanation: string) => void;
+export type TutorImageProcessedListener = (description: string) => void;
 
 export class TutorWebSocket {
   private ws: WebSocket | null = null;
@@ -18,10 +21,13 @@ export class TutorWebSocket {
   private isRecording = false;
   private isConnected = false;
   private isAudioPaused = false;
+  private imagesSent = 0;
+  private readonly MAX_IMAGES = 5;
   private onMessageListeners: TutorEventListener[] = [];
   private onStatusChangeListeners: ((status: string) => void)[] = [];
   private onErrorListeners: ((error: string) => void)[] = [];
   private onExplanationListeners: ((question: string, explanation: string) => void)[] = [];
+  private onImageProcessedListeners: ((description: string) => void)[] = [];
 
   constructor(private serverUrl: string = "ws://localhost:8766") {}
 
@@ -41,6 +47,10 @@ export class TutorWebSocket {
     this.onExplanationListeners.push(listener);
   }
 
+  public addImageProcessedListener(listener: (description: string) => void): void {
+    this.onImageProcessedListeners.push(listener);
+  }
+
   public connect(): Promise<void> {
     return new Promise((resolve, reject) => {
       try {
@@ -50,6 +60,7 @@ export class TutorWebSocket {
         this.ws.onopen = () => {
           console.log("WebSocket connected to tutor service");
           this.isConnected = true;
+          this.imagesSent = 0; // Reset image counter on new connection
           this.notifyStatusChange("connected");
           resolve();
         };
@@ -81,6 +92,12 @@ export class TutorWebSocket {
                   jsonData.explanation || "No explanation provided"
                 );
                 this.notifyMessage(`Q: ${jsonData.question}\n\nA: ${jsonData.explanation}`);
+              } else if (jsonData.type === "image_processed") {
+                // Handle image processing response
+                this.notifyMessage(`Image processed: ${jsonData.message}`);
+                if (jsonData.description) {
+                  this.notifyImageProcessed(jsonData.description);
+                }
               } else {
                 // Handle any other message
                 this.notifyMessage(jsonData.message || "");
@@ -115,6 +132,38 @@ export class TutorWebSocket {
       this.notifyMessage(`You asked: ${question}`);
     } else {
       this.notifyError("Cannot send question: not connected to tutor");
+    }
+  }
+
+  public sendImage(imageUrl: string): boolean {
+    if (this.imagesSent >= this.MAX_IMAGES) {
+      this.notifyError(`Cannot send more than ${this.MAX_IMAGES} images per session`);
+      return false;
+    }
+    
+    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+      this.ws.send(JSON.stringify({
+        type: "image",
+        url: imageUrl
+      }));
+      this.imagesSent++;
+      this.notifyMessage(`Sending image for analysis (${this.imagesSent}/${this.MAX_IMAGES})`);
+      this.notifyStatusChange("processing_image");
+      return true;
+    } else {
+      this.notifyError("Cannot send image: not connected to tutor");
+      return false;
+    }
+  }
+
+  public clearHistory(): void {
+    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+      this.ws.send(JSON.stringify({
+        type: "clear_history"
+      }));
+      this.notifyMessage("Conversation history cleared");
+    } else {
+      this.notifyError("Cannot clear history: not connected to tutor");
     }
   }
 
@@ -223,6 +272,7 @@ export class TutorWebSocket {
     }
     
     this.isConnected = false;
+    this.imagesSent = 0; // Reset image counter
     this.notifyStatusChange("disconnected");
     console.log("Disconnected, all resources cleaned up");
   }
@@ -239,6 +289,10 @@ export class TutorWebSocket {
     return this.isAudioPaused;
   }
 
+  public get remainingImages(): number {
+    return Math.max(0, this.MAX_IMAGES - this.imagesSent);
+  }
+
   private notifyMessage(message: string): void {
     this.onMessageListeners.forEach(listener => listener(message));
   }
@@ -253,5 +307,9 @@ export class TutorWebSocket {
 
   private notifyExplanation(question: string, explanation: string): void {
     this.onExplanationListeners.forEach(listener => listener(question, explanation));
+  }
+
+  private notifyImageProcessed(description: string): void {
+    this.onImageProcessedListeners.forEach(listener => listener(description));
   }
 }
