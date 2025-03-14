@@ -35,6 +35,11 @@ export default function UPSCInterviewSimulator() {
   const [isUsingText, setIsUsingText] = useState<boolean>(false);
   const [isSummaryLoading, setIsSummaryLoading] = useState<boolean>(false);
   const [summaryError, setSummaryError] = useState<string | null>(null);
+  
+  // New state variables for language support
+  const [language, setLanguage] = useState<string>("english");
+  const [languageOptions, setLanguageOptions] = useState<string[]>([]);
+  const [showLanguagePrompt, setShowLanguagePrompt] = useState<boolean>(false);
 
   const interviewWsRef = useRef<UPSCInterviewWebSocket | null>(null);
   const questionEndRef = useRef<HTMLDivElement | null>(null);
@@ -85,6 +90,13 @@ export default function UPSCInterviewSimulator() {
       }
     });
     
+    // Add language prompt listener
+    interviewWsRef.current.addLanguagePromptListener((options) => {
+      console.log("Language options received:", options);
+      setLanguageOptions(options);
+      setShowLanguagePrompt(true);
+    });
+    
     return () => {
       // Cleanup
       if (interviewWsRef.current) {
@@ -92,6 +104,16 @@ export default function UPSCInterviewSimulator() {
       }
     };
   }, []);
+
+  // Update the selected language when the interview WebSocket instance updates it
+  useEffect(() => {
+    if (interviewWsRef.current) {
+      const currentLanguage = interviewWsRef.current.getSelectedLanguage();
+      if (currentLanguage) {
+        setLanguage(currentLanguage);
+      }
+    }
+  }, [connectionStatus]); // Check whenever connection status changes
 
   // Auto-scroll to the bottom when new questions arrive
   useEffect(() => {
@@ -110,7 +132,8 @@ export default function UPSCInterviewSimulator() {
     try {
       const config: UPSCInterviewConfig = {
         user_info: userInfo,
-        num_questions: numQuestions
+        num_questions: numQuestions,
+        language: language as "english" | "hindi" // Add language to config
       };
       
       if (interviewWsRef.current) {
@@ -195,17 +218,104 @@ export default function UPSCInterviewSimulator() {
     }
   };
 
+  // Handle language selection
+  const handleLanguageSelect = (selectedLanguage: string) => {
+    if (interviewWsRef.current) {
+      interviewWsRef.current.selectLanguage(selectedLanguage);
+      setLanguage(selectedLanguage);
+      setShowLanguagePrompt(false);
+      
+      // Add a message about language selection
+      const message = selectedLanguage === "hindi" 
+        ? "हिंदी भाषा चुनी गई। इंटरव्यू हिंदी में जारी रहेगा।" 
+        : "English language selected. The interview will continue in English.";
+      
+      // You could potentially add this as a system message to questions if desired
+    }
+  };
+
+  // Get status message based on current state and language
+  const getStatusMessage = () => {
+    if (interviewComplete) {
+      return language === "hindi" 
+        ? "इंटरव्यू पूरा हुआ! भाग लेने के लिए धन्यवाद।" 
+        : "Interview complete! Thank you for participating.";
+    }
+    
+    if (isRecording) {
+      if (isMicMuted) {
+        return language === "hindi"
+          ? "माइक्रोफोन म्यूट है। जारी रखने के लिए 'माइक अनम्यूट करें' पर क्लिक करें।"
+          : "Microphone muted. Click 'Unmute Mic' to continue.";
+      }
+      return language === "hindi"
+        ? "रिकॉर्डिंग चल रही है... प्रश्नों का उत्तर दें और अगले सवालों के लिए प्रतीक्षा करें।"
+        : "Recording in progress... Answer the questions from the UPSC board members.";
+    }
+    
+    return language === "hindi"
+      ? "इंटरव्यू जारी रखने के लिए 'इंटरव्यू फिर शुरू करें' पर क्लिक करें।"
+      : "Click 'Resume Interview' to continue.";
+  };
+
   return (
     <div className="flex flex-col min-h-screen bg-white text-gray-800">
-      <header className="bg-green-700 text-white py-4 px-6">
+      <header className="bg-green-700 text-white py-4 px-6 flex justify-between items-center">
         <h1 className="text-2xl font-bold">UPSC Interview Simulator</h1>
+        
+        {/* Language indicator */}
+        {isConfigured && (
+          <div className="flex items-center">
+            <span className="text-sm mr-2">
+              {language === "hindi" ? "भाषा:" : "Language:"}
+            </span>
+            <span className="px-2 py-1 bg-green-800 rounded-md text-sm font-medium">
+              {language === "hindi" ? "हिंदी" : "English"}
+            </span>
+          </div>
+        )}
       </header>
 
       <main className="flex-1 p-6 mx-auto max-w-4xl">
+        {/* Language Selection Prompt */}
+        {showLanguagePrompt && (
+          <div className="mb-6 p-4 bg-yellow-50 border border-yellow-100 rounded-md">
+            <h3 className="font-medium text-lg mb-2">Choose Interview Language:</h3>
+            <div className="flex space-x-4">
+              {languageOptions.map((option, index) => (
+                <button
+                  key={index}
+                  onClick={() => handleLanguageSelect(option.toLowerCase())}
+                  className="px-4 py-2 bg-green-700 text-white rounded hover:bg-green-800"
+                >
+                  {option}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+        
         {!isConfigured ? (
           <div className="p-6 space-y-4 bg-gray-50 rounded-md">
             <h2 className="text-xl font-semibold mb-4">Candidate Information</h2>
             
+            {/* Add language selection dropdown to configuration */}
+            <div className="mb-4">
+              <label htmlFor="language" className="block text-sm font-medium text-gray-700 mb-1">
+                Interview Language:
+              </label>
+              <select
+                id="language"
+                value={language}
+                onChange={(e) => setLanguage(e.target.value)}
+                className="w-full p-2 border border-gray-300 rounded-md focus:ring-green-500 focus:border-green-500"
+              >
+                <option value="english">English</option>
+                <option value="hindi">Hindi</option>
+              </select>
+            </div>
+            
+            {/* Existing form fields */}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div>
                 <label htmlFor="name" className="block text-sm font-medium text-gray-700 mb-1">
@@ -314,7 +424,7 @@ export default function UPSCInterviewSimulator() {
               onClick={configureAndStartInterview}
               className="px-4 py-2 rounded-md font-medium text-white bg-green-700 hover:bg-green-800 w-full"
             >
-              Start UPSC Interview
+              {language === "hindi" ? "यूपीएससी साक्षात्कार शुरू करें" : "Start UPSC Interview"}
             </button>
           </div>
         ) : (
@@ -327,7 +437,9 @@ export default function UPSCInterviewSimulator() {
                 }`}
                 disabled={interviewComplete}
               >
-                {isRecording ? "Pause Interview" : "Resume Interview"}
+                {isRecording 
+                  ? (language === "hindi" ? "इंटरव्यू रोकें" : "Pause Interview") 
+                  : (language === "hindi" ? "इंटरव्यू फिर शुरू करें" : "Resume Interview")}
               </button>
               
               <button
@@ -337,7 +449,9 @@ export default function UPSCInterviewSimulator() {
                 }`}
                 disabled={!isRecording || interviewComplete}
               >
-                {isMicMuted ? "Unmute Mic" : "Mute Mic"}
+                {isMicMuted 
+                  ? (language === "hindi" ? "माइक अनम्यूट करें" : "Unmute Mic") 
+                  : (language === "hindi" ? "माइक म्यूट करें" : "Mute Mic")}
               </button>
               
               <button
@@ -347,7 +461,9 @@ export default function UPSCInterviewSimulator() {
                 }`}
                 disabled={interviewComplete}
               >
-                {isUsingText ? "Switch to Voice" : "Switch to Text"}
+                {isUsingText 
+                  ? (language === "hindi" ? "आवाज़ पर स्विच करें" : "Switch to Voice") 
+                  : (language === "hindi" ? "टेक्स्ट पर स्विच करें" : "Switch to Text")}
               </button>
               
               <button
@@ -355,7 +471,7 @@ export default function UPSCInterviewSimulator() {
                 className="px-4 py-2 rounded-md font-medium text-white bg-blue-600 hover:bg-blue-700"
                 disabled={questions.length === 0}
               >
-                Get Summary
+                {language === "hindi" ? "सारांश प्राप्त करें" : "Get Summary"}
               </button>
               
               <button
@@ -363,21 +479,15 @@ export default function UPSCInterviewSimulator() {
                 className="px-4 py-2 rounded-md font-medium text-white bg-red-600 hover:bg-red-700"
                 disabled={interviewComplete}
               >
-                End Interview
+                {language === "hindi" ? "इंटरव्यू समाप्त करें" : "End Interview"}
               </button>
             </div>
             
             <div className="mb-4">
-              <p className="text-gray-600">
-                {interviewComplete 
-                  ? "Interview complete! Request a summary to see your performance."
-                  : isRecording 
-                    ? isMicMuted 
-                      ? "Microphone muted. Click 'Unmute Mic' to continue."
-                      : "Recording in progress... Answer the questions from the UPSC board members." 
-                    : "Click 'Resume Interview' to continue."}
+              <p className="text-gray-600">{getStatusMessage()}</p>
+              <p className="text-sm text-gray-500 mt-1">
+                {language === "hindi" ? "स्थिति:" : "Status:"} {connectionStatus}
               </p>
-              <p className="text-sm text-gray-500 mt-1">Status: {connectionStatus}</p>
             </div>
             
             {boardMembers.length > 0 && (
@@ -428,7 +538,7 @@ export default function UPSCInterviewSimulator() {
             {currentQuestion && isUsingText && (
               <div className="mb-4">
                 <label htmlFor="text-answer" className="block text-sm font-medium text-gray-700 mb-1">
-                  Type your answer:
+                  {language === "hindi" ? "अपना उत्तर लिखें:" : "Type your answer:"}
                 </label>
                 <div className="flex gap-2">
                   <textarea
@@ -436,7 +546,7 @@ export default function UPSCInterviewSimulator() {
                     value={textAnswer}
                     onChange={(e) => setTextAnswer(e.target.value)}
                     className="w-full p-2 border border-gray-300 rounded-md focus:ring-green-500 focus:border-green-500"
-                    placeholder="Type your response here..."
+                    placeholder={language === "hindi" ? "यहां अपनी प्रतिक्रिया लिखें..." : "Type your response here..."}
                     rows={3}
                     disabled={interviewComplete}
                   ></textarea>
@@ -445,7 +555,7 @@ export default function UPSCInterviewSimulator() {
                     className="px-4 py-2 h-fit rounded-md font-medium text-white bg-green-600 hover:bg-green-700"
                     disabled={!textAnswer.trim() || interviewComplete}
                   >
-                    Submit
+                    {language === "hindi" ? "सबमिट करें" : "Submit"}
                   </button>
                 </div>
               </div>
@@ -454,12 +564,10 @@ export default function UPSCInterviewSimulator() {
             {summary && (
               <div className="mt-6 p-5 bg-blue-50 border border-blue-100 rounded-md">
                 <h3 className="text-lg font-semibold mb-3">UPSC Interview Summary</h3>
-                
                 {/* Debug information - consider removing in production */}
                 <div className="mb-4 p-2 bg-gray-100 rounded text-xs overflow-auto max-h-32">
                   <pre>{JSON.stringify(summary, null, 2)}</pre>
                 </div>
-                
                 {summary.scores && (
                   <div className="mb-4 grid grid-cols-2 md:grid-cols-4 gap-4">
                     <div className="bg-white p-3 rounded-md shadow-sm">
@@ -488,7 +596,6 @@ export default function UPSCInterviewSimulator() {
                     </div>
                   </div>
                 )}
-                
                 {summary.overall_feedback && (
                   <div className="mb-4">
                     <h4 className="font-medium mb-2">Overall Feedback:</h4>
@@ -497,7 +604,6 @@ export default function UPSCInterviewSimulator() {
                     </div>
                   </div>
                 )}
-                
                 {summary.questions && Array.isArray(summary.questions) && summary.questions.length > 0 ? (
                   <div>
                     <h4 className="font-medium mb-2">Question & Answer Review:</h4>
@@ -542,7 +648,9 @@ export default function UPSCInterviewSimulator() {
             
             {isSummaryLoading && !summary && (
               <div className="mt-6 p-5 bg-blue-50 border border-blue-100 rounded-md text-center">
-                <p className="text-gray-600">Generating your interview summary...</p>
+                <p className="text-gray-600">
+                  {language === "hindi" ? "आपका इंटरव्यू सारांश तैयार किया जा रहा है..." : "Generating your interview summary..."}
+                </p>
                 <div className="mt-3 flex justify-center">
                   <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
                 </div>

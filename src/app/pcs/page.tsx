@@ -11,7 +11,9 @@ export default function PCSInterviewAssistant() {
   const [interviewComplete, setInterviewComplete] = useState<boolean>(false);
   const [connectionStatus, setConnectionStatus] = useState<string>("disconnected");
   const [isMicMuted, setIsMicMuted] = useState<boolean>(false);
-  const [preferredLanguage, setPreferredLanguage] = useState<string>("english"); // or "hindi"
+  const [preferredLanguage, setPreferredLanguage] = useState<string>("english"); 
+  const [showLanguageSelector, setShowLanguageSelector] = useState<boolean>(false);
+  const [languageOptions, setLanguageOptions] = useState<string[]>([]);
 
   const pcsWsRef = useRef<PCSWebSocket | null>(null);
   const responseEndRef = useRef<HTMLDivElement | null>(null);
@@ -32,6 +34,11 @@ export default function PCSInterviewAssistant() {
         setIsConfigured(true);
         // Auto-start recording when ready
         startRecording();
+        
+        // Update preferred language from WebSocket if available
+        if (pcsWsRef.current) {
+          setPreferredLanguage(pcsWsRef.current.getSelectedLanguage());
+        }
       } else if (status === "complete") {
         setInterviewComplete(true);
         setIsRecording(false);
@@ -48,6 +55,12 @@ export default function PCSInterviewAssistant() {
         hindi: `त्रुटि: ${error}`
       };
       setResponses(prev => [...prev, errorResponse]);
+    });
+    
+    // Add language prompt listener
+    pcsWsRef.current.addLanguagePromptListener((options) => {
+      setLanguageOptions(options);
+      setShowLanguageSelector(true);
     });
     
     return () => {
@@ -74,7 +87,8 @@ export default function PCSInterviewAssistant() {
     try {
       if (pcsWsRef.current) {
         await pcsWsRef.current.configure({
-          candidate_info: candidateInfo
+          candidate_info: candidateInfo,
+          language: preferredLanguage as "english" | "hindi"
         });
         // Note: startRecording will be triggered by the "ready" status change
       }
@@ -130,41 +144,99 @@ export default function PCSInterviewAssistant() {
   };
 
   const toggleLanguage = () => {
-    setPreferredLanguage(prev => prev === "english" ? "hindi" : "english");
+    const newLanguage = preferredLanguage === "english" ? "hindi" : "english";
+    setPreferredLanguage(newLanguage);
+    
+    // Send language selection to server if WebSocket is configured
+    if (pcsWsRef.current && pcsWsRef.current.configured) {
+      pcsWsRef.current.selectLanguage(newLanguage);
+    }
+  };
+  
+  const selectLanguageOption = (language: string) => {
+    const normalizedLang = language.toLowerCase();
+    setPreferredLanguage(normalizedLang);
+    setShowLanguageSelector(false);
+    
+    // Send language selection to server
+    if (pcsWsRef.current) {
+      pcsWsRef.current.selectLanguage(normalizedLang);
+    }
   };
 
   return (
     <div className="flex flex-col min-h-screen bg-white text-gray-800">
       <header className="bg-blue-700 text-white py-4 px-6">
         <h1 className="text-2xl font-bold">PCS Interview Assistant</h1>
-        <p className="text-sm opacity-80">Punjab Civil Services Interview Preparation</p>
+        <p className="text-sm opacity-80">
+          {preferredLanguage === "english" 
+            ? "Punjab Civil Services Interview Preparation" 
+            : "पंजाब सिविल सेवा साक्षात्कार तैयारी"}
+        </p>
       </header>
 
       <main className="flex-1 p-6 mx-auto max-w-3xl">
+        {/* Language Selection Prompt */}
+        {showLanguageSelector && (
+          <div className="p-4 mb-6 bg-yellow-50 border border-yellow-200 rounded-md">
+            <h3 className="font-medium text-yellow-800 mb-2">
+              {preferredLanguage === "english" 
+                ? "Please select your preferred interview language:" 
+                : "कृपया अपनी पसंदीदा साक्षात्कार भाषा चुनें:"}
+            </h3>
+            <div className="flex space-x-3">
+              {languageOptions.map((lang, index) => (
+                <button
+                  key={index}
+                  className="px-4 py-2 bg-white border border-gray-300 rounded-md hover:bg-gray-50"
+                  onClick={() => selectLanguageOption(lang)}
+                >
+                  {lang}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+      
         {!isConfigured ? (
           <div className="p-6 space-y-4 bg-gray-50 rounded-md">
             <div>
               <label htmlFor="candidate-info" className="block text-sm font-medium text-gray-700 mb-1">
-                Candidate Information:
+                {preferredLanguage === "english" 
+                  ? "Candidate Information:" 
+                  : "उम्मीदवार की जानकारी:"}
               </label>
               <textarea 
                 id="candidate-info"
                 value={candidateInfo}
                 onChange={(e) => setCandidateInfo(e.target.value)}
                 className="w-full h-40 p-2 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500"
-                placeholder="Enter your background information here (education, career, district, etc.)"
+                placeholder={preferredLanguage === "english" 
+                  ? "Enter your background information here (education, career, district, etc.)"
+                  : "अपनी पृष्ठभूमि की जानकारी यहां दर्ज करें (शिक्षा, करियर, जिला, आदि)"}
               ></textarea>
               <p className="mt-1 text-sm text-gray-500">
-                Provide details about yourself to help tailor the PCS interview questions to your profile.
+                {preferredLanguage === "english" 
+                  ? "Provide details about yourself to help tailor the PCS interview questions to your profile."
+                  : "अपने बारे में विवरण प्रदान करें ताकि PCS साक्षात्कार प्रश्नों को आपके प्रोफ़ाइल के अनुरूप बनाने में मदद मिल सके।"}
               </p>
             </div>
             
-            <button
-              onClick={configureAndStartInterview}
-              className="px-4 py-2 rounded-md font-medium text-white bg-blue-700 hover:bg-blue-800 w-full"
-            >
-              Start PCS Interview
-            </button>
+            <div className="flex items-center space-x-4">
+              <button
+                onClick={configureAndStartInterview}
+                className="flex-1 px-4 py-2 rounded-md font-medium text-white bg-blue-700 hover:bg-blue-800"
+              >
+                {preferredLanguage === "english" ? "Start PCS Interview" : "PCS साक्षात्कार शुरू करें"}
+              </button>
+              
+              <button
+                onClick={toggleLanguage}
+                className="px-4 py-2 rounded-md font-medium text-white bg-purple-500 hover:bg-purple-600"
+              >
+                {preferredLanguage === "english" ? "हिंदी में बदलें" : "Switch to English"}
+              </button>
+            </div>
           </div>
         ) : (
           <div className="p-6 space-y-4 bg-gray-50 rounded-md">
@@ -176,7 +248,9 @@ export default function PCSInterviewAssistant() {
                 }`}
                 disabled={interviewComplete}
               >
-                {isRecording ? "Pause Interview" : "Resume Interview"}
+                {isRecording 
+                  ? (preferredLanguage === "english" ? "Pause Interview" : "साक्षात्कार रोकें") 
+                  : (preferredLanguage === "english" ? "Resume Interview" : "साक्षात्कार जारी रखें")}
               </button>
               
               <button
@@ -186,14 +260,16 @@ export default function PCSInterviewAssistant() {
                 }`}
                 disabled={!isRecording || interviewComplete}
               >
-                {isMicMuted ? "Unmute Mic" : "Mute Mic"}
+                {isMicMuted 
+                  ? (preferredLanguage === "english" ? "Unmute Mic" : "माइक अनम्यूट करें") 
+                  : (preferredLanguage === "english" ? "Mute Mic" : "माइक म्यूट करें")}
               </button>
               
               <button
                 onClick={toggleLanguage}
                 className="px-4 py-2 rounded-md font-medium text-white bg-purple-500 hover:bg-purple-600"
               >
-                {preferredLanguage === "english" ? "Switch to Hindi" : "Switch to English"}
+                {preferredLanguage === "english" ? "हिंदी में बदलें" : "Switch to English"}
               </button>
               
               <button
@@ -201,35 +277,47 @@ export default function PCSInterviewAssistant() {
                 className="px-4 py-2 rounded-md font-medium text-white bg-blue-500 hover:bg-blue-600"
                 disabled={interviewComplete}
               >
-                End Interview
+                {preferredLanguage === "english" ? "End Interview" : "साक्षात्कार समाप्त करें"}
               </button>
               
               <button
                 onClick={clearResponses}
                 className="px-4 py-2 rounded-md font-medium text-white bg-gray-500 hover:bg-gray-600"
               >
-                Clear Responses
+                {preferredLanguage === "english" ? "Clear Responses" : "प्रतिक्रियाएं साफ़ करें"}
               </button>
             </div>
             
             <div className="mb-4">
               <p className="text-gray-600">
                 {interviewComplete 
-                  ? "Interview complete! Thank you for participating."
+                  ? (preferredLanguage === "english" 
+                    ? "Interview complete! Thank you for participating." 
+                    : "साक्षात्कार पूरा हुआ! भाग लेने के लिए धन्यवाद।")
                   : isRecording 
                     ? isMicMuted 
-                      ? "Microphone muted. Click 'Unmute Mic' to continue."
-                      : "Recording in progress... Answer the questions from the panel." 
-                    : "Click 'Resume Interview' to continue."}
+                      ? (preferredLanguage === "english" 
+                        ? "Microphone muted. Click 'Unmute Mic' to continue." 
+                        : "माइक्रोफोन म्यूट है। जारी रखने के लिए 'माइक अनम्यूट करें' पर क्लिक करें।")
+                      : (preferredLanguage === "english" 
+                        ? "Recording in progress... Answer the questions from the panel." 
+                        : "रिकॉर्डिंग चल रही है... पैनल के प्रश्नों का उत्तर दें।")
+                    : (preferredLanguage === "english" 
+                      ? "Click 'Resume Interview' to continue." 
+                      : "जारी रखने के लिए 'साक्षात्कार जारी रखें' पर क्लिक करें।")}
               </p>
-              <p className="text-sm text-gray-500 mt-1">Status: {connectionStatus}</p>
+              <p className="text-sm text-gray-500 mt-1">
+                {preferredLanguage === "english" ? `Status: ${connectionStatus}` : `स्थिति: ${connectionStatus}`}
+              </p>
             </div>
           </div>
         )}
 
         {responses.length > 0 && (
           <section className="bg-white mt-6 p-4 border border-gray-200 rounded-md shadow-sm">
-            <h2 className="text-lg font-semibold mb-2">Interview Transcript</h2>
+            <h2 className="text-lg font-semibold mb-2">
+              {preferredLanguage === "english" ? "Interview Transcript" : "साक्षात्कार प्रतिलेख"}
+            </h2>
             <div className="bg-gray-50 rounded-md p-4 max-h-96 overflow-y-auto">
               {responses.map((response, index) => (
                 <div key={index} className="mb-3 pb-3 border-b border-gray-200 last:border-b-0">
@@ -239,11 +327,10 @@ export default function PCSInterviewAssistant() {
                       {response[preferredLanguage as keyof BilingualResponse]}
                     </p>
                   )}
-                  
                   {/* Display the other language in smaller text */}
                   {preferredLanguage === "english" && response.hindi && (
                     <p className="whitespace-pre-wrap text-gray-500 text-sm mt-1">
-                      Hindi: {response.hindi}
+                      हिंदी: {response.hindi}
                     </p>
                   )}
                   {preferredLanguage === "hindi" && response.english && (

@@ -16,6 +16,8 @@ export default function NCERTTutor() {
   const [remainingImages, setRemainingImages] = useState<number>(5);
   const [isProcessingImage, setIsProcessingImage] = useState<boolean>(false);
   const [imageDescription, setImageDescription] = useState<string | null>(null);
+  const [selectedLanguage, setSelectedLanguage] = useState<string>("english");
+  const [showLanguageSelector, setShowLanguageSelector] = useState<boolean>(false);
 
   const tutorWsRef = useRef<TutorWebSocket | null>(null);
   const responseEndRef = useRef<HTMLDivElement | null>(null);
@@ -23,7 +25,7 @@ export default function NCERTTutor() {
   
   // Initialize tutor WebSocket instance
   useEffect(() => {
-    tutorWsRef.current = new TutorWebSocket("ws://localhost:8766");
+    tutorWsRef.current = new TutorWebSocket("wss://ws3.nextround.tech/tutor");
     
     // Set up event listeners
     tutorWsRef.current.addMessageListener((message) => {
@@ -40,6 +42,9 @@ export default function NCERTTutor() {
         setIsRecording(false);
       } else if (status === "processing_image") {
         setIsProcessingImage(true);
+      } else if (status === "language_selection") {
+        // Show language selection when the server requests it
+        setShowLanguageSelector(true);
       }
     });
     
@@ -54,6 +59,10 @@ export default function NCERTTutor() {
     tutorWsRef.current.addImageProcessedListener((description) => {
       setImageDescription(description);
       setIsProcessingImage(false);
+    });
+    
+    tutorWsRef.current.addLanguageChangeListener((language) => {
+      setSelectedLanguage(language);
     });
     
     return () => {
@@ -86,6 +95,20 @@ export default function NCERTTutor() {
       }
     } catch (error) {
       console.error("Error connecting to tutor:", error);
+    }
+  };
+
+  const selectLanguage = (language: string) => {
+    if (tutorWsRef.current) {
+      tutorWsRef.current.selectLanguage(language);
+      setSelectedLanguage(language);
+      setShowLanguageSelector(false);
+    }
+  };
+
+  const changeLanguage = (language: string) => {
+    if (tutorWsRef.current) {
+      tutorWsRef.current.changeLanguage(language);
     }
   };
 
@@ -203,13 +226,53 @@ export default function NCERTTutor() {
     }
   };
 
+  // Language selector component
+  const LanguageSelector = () => (
+    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+      <div className="bg-white rounded-lg p-6 max-w-sm w-full">
+        <h3 className="text-lg font-medium mb-4 text-center">Select your preferred language</h3>
+        <div className="flex justify-center space-x-4">
+          <button
+            onClick={() => selectLanguage("english")}
+            className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700"
+          >
+            English
+          </button>
+          <button
+            onClick={() => selectLanguage("hindi")}
+            className="px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700"
+          >
+            हिंदी (Hindi)
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+
   return (
     <div className="flex flex-col min-h-screen bg-white text-gray-800">
-      <header className="bg-blue-600 text-white py-4 px-6">
+      <header className="bg-blue-600 text-white py-4 px-6 flex justify-between items-center">
         <h1 className="text-2xl font-bold">NCERT 10th Grade Tutor</h1>
+        {isConnected && (
+          <div className="flex items-center">
+            <span className="mr-2 text-sm">
+              {selectedLanguage === "hindi" ? "भाषा:" : "Language:"}
+            </span>
+            <select 
+              value={selectedLanguage}
+              onChange={(e) => changeLanguage(e.target.value)}
+              className="bg-blue-700 text-white px-2 py-1 rounded border-none cursor-pointer"
+            >
+              <option value="english">English</option>
+              <option value="hindi">हिंदी (Hindi)</option>
+            </select>
+          </div>
+        )}
       </header>
 
       <main className="flex-1 p-6 mx-auto max-w-3xl">
+        {showLanguageSelector && <LanguageSelector />}
+
         <div className="p-6 space-y-4 bg-gray-50 rounded-md">
           {!isConnected ? (
             <button
@@ -227,7 +290,11 @@ export default function NCERTTutor() {
                     isRecording ? "bg-red-500 hover:bg-red-600" : "bg-blue-500 hover:bg-blue-600"
                   }`}
                 >
-                  {isRecording ? "Stop Voice Input" : "Start Voice Input"}
+                  {isRecording ? (
+                    selectedLanguage === "hindi" ? "वॉइस इनपुट बंद करें" : "Stop Voice Input"
+                  ) : (
+                    selectedLanguage === "hindi" ? "वॉइस इनपुट शुरू करें" : "Start Voice Input"
+                  )}
                 </button>
                 
                 <button
@@ -237,47 +304,63 @@ export default function NCERTTutor() {
                   }`}
                   disabled={!isRecording}
                 >
-                  {isMicMuted ? "Unmute Mic" : "Mute Mic"}
+                  {isMicMuted ? (
+                    selectedLanguage === "hindi" ? "माइक अनम्यूट करें" : "Unmute Mic"
+                  ) : (
+                    selectedLanguage === "hindi" ? "माइक म्यूट करें" : "Mute Mic"
+                  )}
                 </button>
                 
                 <button
                   onClick={clearResponses}
                   className="px-4 py-2 rounded-md font-medium text-white bg-gray-500 hover:bg-gray-600"
                 >
-                  Clear Chat
+                  {selectedLanguage === "hindi" ? "चैट साफ़ करें" : "Clear Chat"}
                 </button>
                 
                 <button
                   onClick={clearHistory}
                   className="px-4 py-2 rounded-md font-medium text-white bg-indigo-500 hover:bg-indigo-600"
                 >
-                  Reset Memory
+                  {selectedLanguage === "hindi" ? "मेमोरी रीसेट करें" : "Reset Memory"}
                 </button>
                 
                 <button
                   onClick={disconnect}
                   className="px-4 py-2 rounded-md font-medium text-white bg-gray-700 hover:bg-gray-800"
                 >
-                  Disconnect
+                  {selectedLanguage === "hindi" ? "डिस्कनेक्ट" : "Disconnect"}
                 </button>
               </div>
               
               <div className="mb-4">
                 <p className="text-gray-600">
-                  {isRecording 
-                    ? isMicMuted 
-                      ? "Microphone muted. Click 'Unmute Mic' to continue."
-                      : "Voice input active. Ask your questions about NCERT topics." 
-                    : "Click 'Start Voice Input' to ask questions by voice."}
+                  {selectedLanguage === "hindi" ? 
+                    (isRecording 
+                      ? (isMicMuted 
+                        ? "माइक्रोफ़ोन म्यूट है। जारी रखने के लिए 'माइक अनम्यूट करें' पर क्लिक करें।" 
+                        : "वॉइस इनपुट सक्रिय है। एनसीईआरटी विषयों के बारे में अपने प्रश्न पूछें।")
+                      : "'वॉइस इनपुट शुरू करें' पर क्लिक करके आवाज के माध्यम से प्रश्न पूछें।") :
+                    (isRecording 
+                      ? isMicMuted 
+                        ? "Microphone muted. Click 'Unmute Mic' to continue."
+                        : "Voice input active. Ask your questions about NCERT topics." 
+                      : "Click 'Start Voice Input' to ask questions by voice.")
+                  }
                 </p>
                 <p className="text-sm text-gray-500 mt-1">Status: {connectionStatus}</p>
               </div>
               
               {/* Image upload section */}
               <div className="border border-gray-300 rounded-md p-4 mb-4">
-                <h3 className="font-medium mb-2">Image Analysis</h3>
+                <h3 className="font-medium mb-2">
+                  {selectedLanguage === "hindi" ? "छवि विश्लेषण" : "Image Analysis"}
+                </h3>
                 <p className="text-sm text-gray-500 mb-2">
-                  Upload an image of a textbook page, diagram, or problem to analyze (Max: {remainingImages} images remaining)
+                  {selectedLanguage === "hindi" 
+                    ? `पाठ्यपुस्तक पृष्ठ, आरेख, या समस्या की छवि विश्लेषण के लिए अपलोड करें (अधिकतम: ${remainingImages} छवियां शेष)`
+                    : `Upload an image of a textbook page, diagram, or problem to analyze (Max: ${remainingImages} images remaining)`
+                  }
                 </p>
                 
                 <div className="flex items-center gap-2">
@@ -296,7 +379,11 @@ export default function NCERTTutor() {
                   />
                   
                   {remainingImages <= 0 && (
-                    <span className="text-xs text-red-500">Image limit reached</span>
+                    <span className="text-xs text-red-500">
+                      {selectedLanguage === "hindi" 
+                        ? "छवि सीमा पहुंच गई" 
+                        : "Image limit reached"}
+                    </span>
                   )}
                 </div>
                 
@@ -319,13 +406,15 @@ export default function NCERTTutor() {
                             : "bg-green-600 hover:bg-green-700"
                         }`}
                       >
-                        {isProcessingImage ? "Processing..." : "Analyze Image"}
+                        {isProcessingImage 
+                          ? (selectedLanguage === "hindi" ? "प्रोसेसिंग..." : "Processing...") 
+                          : (selectedLanguage === "hindi" ? "छवि का विश्लेषण करें" : "Analyze Image")}
                       </button>
                       <button
                         onClick={cancelImageUpload}
                         className="px-3 py-1 rounded text-sm text-white bg-gray-600 hover:bg-gray-700"
                       >
-                        Cancel
+                        {selectedLanguage === "hindi" ? "रद्द करें" : "Cancel"}
                       </button>
                     </div>
                   </div>
@@ -334,7 +423,11 @@ export default function NCERTTutor() {
                 {isProcessingImage && (
                   <div className="flex items-center justify-center mt-4">
                     <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-blue-500"></div>
-                    <span className="ml-2 text-sm text-gray-600">Processing image...</span>
+                    <span className="ml-2 text-sm text-gray-600">
+                      {selectedLanguage === "hindi" 
+                        ? "छवि प्रोसेस हो रही है..." 
+                        : "Processing image..."}
+                    </span>
                   </div>
                 )}
               </div>
@@ -345,7 +438,11 @@ export default function NCERTTutor() {
                   onChange={(e) => setTextQuestion(e.target.value)}
                   onKeyDown={handleKeyPress}
                   className="w-full p-3 pr-16 border border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500 resize-none"
-                  placeholder="Type your question here... (Press Enter to send)"
+                  placeholder={
+                    selectedLanguage === "hindi"
+                      ? "अपना प्रश्न यहां टाइप करें... (भेजने के लिए Enter दबाएँ)"
+                      : "Type your question here... (Press Enter to send)"
+                  }
                   rows={2}
                 ></textarea>
                 <button
@@ -364,7 +461,9 @@ export default function NCERTTutor() {
 
         {responses.length > 0 && (
           <section className="bg-white mt-6 p-4 border border-gray-200 rounded-md shadow-sm">
-            <h2 className="text-lg font-semibold mb-2">Tutor Chat</h2>
+            <h2 className="text-lg font-semibold mb-2">
+              {selectedLanguage === "hindi" ? "ट्यूटर चैट" : "Tutor Chat"}
+            </h2>
             <div className="bg-gray-50 rounded-md p-4 max-h-[60vh] overflow-y-auto">
               {responses.map((response, index) => (
                 <div key={index} className="mb-4 pb-3 border-b border-gray-200 last:border-b-0">
@@ -378,7 +477,9 @@ export default function NCERTTutor() {
                     </div>
                   ) : response.startsWith("Image processed:") ? (
                     <div className="bg-purple-50 p-3 rounded-lg">
-                      <p className="font-medium text-gray-900">Image Analysis:</p>
+                      <p className="font-medium text-gray-900">
+                        {selectedLanguage === "hindi" ? "छवि विश्लेषण:" : "Image Analysis:"}
+                      </p>
                       <p className="whitespace-pre-wrap text-gray-800">{response}</p>
                     </div>
                   ) : response.startsWith("Sending image") ? (
@@ -388,11 +489,15 @@ export default function NCERTTutor() {
                   ) : response.startsWith("Q:") ? (
                     <div className="space-y-2">
                       <div className="bg-blue-50 p-3 rounded-lg max-w-[80%] ml-auto">
-                        <p className="font-medium text-gray-900">Question:</p>
+                        <p className="font-medium text-gray-900">
+                          {selectedLanguage === "hindi" ? "प्रश्न:" : "Question:"}
+                        </p>
                         <p className="whitespace-pre-wrap text-gray-800">{response.split("\n\nA:")[0].substring(3)}</p>
                       </div>
                       <div className="bg-green-50 p-3 rounded-lg">
-                        <p className="font-medium text-gray-900">Answer:</p>
+                        <p className="font-medium text-gray-900">
+                          {selectedLanguage === "hindi" ? "उत्तर:" : "Answer:"}
+                        </p>
                         <p className="whitespace-pre-wrap text-gray-800">{response.split("\n\nA:")[1]}</p>
                       </div>
                     </div>

@@ -11,6 +11,9 @@ export default function EthicsInterview() {
   const [interviewComplete, setInterviewComplete] = useState<boolean>(false);
   const [connectionStatus, setConnectionStatus] = useState<string>("disconnected");
   const [isMicMuted, setIsMicMuted] = useState<boolean>(false);
+  const [language, setLanguage] = useState<string>("english");
+  const [showLanguagePrompt, setShowLanguagePrompt] = useState<boolean>(false);
+  const [languageOptions, setLanguageOptions] = useState<string[]>(["English", "Hindi"]);
 
   const ethicsWsRef = useRef<EthicsWebSocket | null>(null);
   const responseEndRef = useRef<HTMLDivElement | null>(null);
@@ -44,6 +47,12 @@ export default function EthicsInterview() {
       setResponses(prev => [...prev, `Error: ${error}`]);
     });
     
+    // Add language prompt listener
+    ethicsWsRef.current.addLanguagePromptListener((options) => {
+      setLanguageOptions(options);
+      setShowLanguagePrompt(true);
+    });
+    
     return () => {
       // Cleanup
       if (ethicsWsRef.current) {
@@ -62,7 +71,8 @@ export default function EthicsInterview() {
   const configureAndStartInterview = async () => {
     try {
       const config: EthicsConfig = {
-        difficulty: difficulty as "easy" | "medium" | "hard"
+        difficulty: difficulty as "easy" | "medium" | "hard",
+        language: language as "english" | "hindi"
       };
       
       if (ethicsWsRef.current) {
@@ -121,6 +131,16 @@ export default function EthicsInterview() {
     setResponses([]);
   };
 
+  const selectLanguage = (selectedLanguage: string) => {
+    const normalizedLanguage = selectedLanguage.toLowerCase();
+    setLanguage(normalizedLanguage);
+    setShowLanguagePrompt(false);
+    
+    if (ethicsWsRef.current) {
+      ethicsWsRef.current.selectLanguage(normalizedLanguage);
+    }
+  };
+
   return (
     <div className="flex flex-col min-h-screen bg-white text-gray-800">
       <header className="bg-purple-600 text-white py-4 px-6">
@@ -129,6 +149,26 @@ export default function EthicsInterview() {
       </header>
 
       <main className="flex-1 p-6 mx-auto max-w-3xl">
+        {showLanguagePrompt && (
+          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-10">
+            <div className="bg-white p-6 rounded-lg shadow-lg max-w-md w-full">
+              <h2 className="text-xl font-semibold text-purple-700 mb-4">Select Interview Language</h2>
+              <p className="mb-4">Would you like to conduct this interview in English or Hindi?</p>
+              <div className="flex space-x-4">
+                {languageOptions.map((option) => (
+                  <button
+                    key={option}
+                    className="flex-1 px-4 py-2 bg-purple-600 text-white rounded hover:bg-purple-700 transition"
+                    onClick={() => selectLanguage(option)}
+                  >
+                    {option}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+        )}
+        
         {!isConfigured ? (
           <div className="p-6 space-y-4 bg-gray-50 rounded-md shadow-sm">
             <div className="text-center mb-6">
@@ -149,25 +189,42 @@ export default function EthicsInterview() {
               </ul>
             </div>
             
-            <div>
-              <label htmlFor="difficulty" className="block text-sm font-medium text-gray-700 mb-1">
-                Difficulty Level:
-              </label>
-              <select
-                id="difficulty"
-                value={difficulty}
-                onChange={(e) => setDifficulty(e.target.value)}
-                className="w-full p-2 border border-gray-300 rounded-md focus:ring-purple-500 focus:border-purple-500"
-              >
-                <option value="easy">Easy</option>
-                <option value="medium">Medium</option>
-                <option value="hard">Hard</option>
-              </select>
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+              <div>
+                <label htmlFor="difficulty" className="block text-sm font-medium text-gray-700 mb-1">
+                  Difficulty Level:
+                </label>
+                <select
+                  id="difficulty"
+                  value={difficulty}
+                  onChange={(e) => setDifficulty(e.target.value)}
+                  className="w-full p-2 border border-gray-300 rounded-md focus:ring-purple-500 focus:border-purple-500"
+                >
+                  <option value="easy">Easy</option>
+                  <option value="medium">Medium</option>
+                  <option value="hard">Hard</option>
+                </select>
+              </div>
+              
+              <div>
+                <label htmlFor="language" className="block text-sm font-medium text-gray-700 mb-1">
+                  Preferred Language:
+                </label>
+                <select
+                  id="language"
+                  value={language}
+                  onChange={(e) => setLanguage(e.target.value)}
+                  className="w-full p-2 border border-gray-300 rounded-md focus:ring-purple-500 focus:border-purple-500"
+                >
+                  <option value="english">English</option>
+                  <option value="hindi">Hindi</option>
+                </select>
+              </div>
             </div>
             
             <button
               onClick={configureAndStartInterview}
-              className="px-4 py-2 rounded-md font-medium text-white bg-purple-600 hover:bg-purple-700 w-full"
+              className="px-4 py-2 rounded-md font-medium text-white bg-purple-600 hover:bg-purple-700 w-full mt-4"
             >
               Start Ethics Interview
             </button>
@@ -211,7 +268,7 @@ export default function EthicsInterview() {
               </button>
             </div>
             
-            <div className="mb-4">
+            <div className="mb-4 flex justify-between items-center">
               <p className="text-gray-600">
                 {interviewComplete 
                   ? "Interview complete! Thank you for participating in this Ethics practice session."
@@ -221,7 +278,10 @@ export default function EthicsInterview() {
                       : "Ethics interview in progress... Answer the questions clearly." 
                     : "Click 'Resume Interview' to continue the Ethics interview."}
               </p>
-              <p className="text-sm text-gray-500 mt-1">Status: {connectionStatus}</p>
+              <div className="text-right">
+                <span className="text-sm text-gray-500 block">Status: {connectionStatus}</span>
+                <span className="text-sm text-gray-500 block">Language: {language === "hindi" ? "हिंदी" : "English"}</span>
+              </div>
             </div>
           </div>
         )}

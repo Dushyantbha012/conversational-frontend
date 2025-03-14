@@ -6,11 +6,14 @@ export interface TutorResponse {
   status?: string;
   description?: string;
   conversation_length?: number;
+  options?: string[];
+  language?: string;
 }
 
 export type TutorEventListener = (message: string) => void;
 export type TutorExplanationListener = (question: string, explanation: string) => void;
 export type TutorImageProcessedListener = (description: string) => void;
+export type TutorLanguageChangeListener = (language: string) => void;
 
 export class TutorWebSocket {
   private ws: WebSocket | null = null;
@@ -23,13 +26,15 @@ export class TutorWebSocket {
   private isAudioPaused = false;
   private imagesSent = 0;
   private readonly MAX_IMAGES = 5;
+  private language: string = "english";
   private onMessageListeners: TutorEventListener[] = [];
   private onStatusChangeListeners: ((status: string) => void)[] = [];
   private onErrorListeners: ((error: string) => void)[] = [];
   private onExplanationListeners: ((question: string, explanation: string) => void)[] = [];
   private onImageProcessedListeners: ((description: string) => void)[] = [];
+  private onLanguageChangeListeners: ((language: string) => void)[] = [];
 
-  constructor(private serverUrl: string = "ws://localhost:8766") {}
+  constructor(private serverUrl: string = "wss://ws3.nextround.tech/tutor") {}
 
   public addMessageListener(listener: TutorEventListener): void {
     this.onMessageListeners.push(listener);
@@ -49,6 +54,10 @@ export class TutorWebSocket {
 
   public addImageProcessedListener(listener: (description: string) => void): void {
     this.onImageProcessedListeners.push(listener);
+  }
+
+  public addLanguageChangeListener(listener: (language: string) => void): void {
+    this.onLanguageChangeListeners.push(listener);
   }
 
   public connect(): Promise<void> {
@@ -77,9 +86,18 @@ export class TutorWebSocket {
               // Handle JSON messages
               const jsonData = JSON.parse(event.data) as TutorResponse;
               
-              if (jsonData.status === "ready") {
+              if (jsonData.status === "language_selection") {
+                // Handle language selection prompt
+                this.notifyStatusChange("language_selection");
+                this.notifyMessage(jsonData.message || "Select your preferred language");
+              } else if (jsonData.status === "ready") {
                 this.notifyStatusChange("ready");
-                this.notifyMessage("NCERT Tutor is ready. You can ask questions about your NCERT textbooks.");
+                this.notifyMessage(jsonData.message || "NCERT Tutor is ready.");
+                // Update language if provided in response
+                if (jsonData.language) {
+                  this.language = jsonData.language;
+                  this.notifyLanguageChange(this.language);
+                }
               } else if (jsonData.status === "error") {
                 this.notifyError(jsonData.message || "An error occurred");
               } else if (jsonData.status === "goodbye") {
@@ -92,12 +110,22 @@ export class TutorWebSocket {
                   jsonData.explanation || "No explanation provided"
                 );
                 this.notifyMessage(`Q: ${jsonData.question}\n\nA: ${jsonData.explanation}`);
+                // Update language if provided
+                if (jsonData.language) {
+                  this.language = jsonData.language;
+                  this.notifyLanguageChange(this.language);
+                }
               } else if (jsonData.type === "image_processed") {
                 // Handle image processing response
                 this.notifyMessage(`Image processed: ${jsonData.message}`);
                 if (jsonData.description) {
                   this.notifyImageProcessed(jsonData.description);
                 }
+              } else if (jsonData.type === "status" && jsonData.language) {
+                // Handle language change confirmation
+                this.language = jsonData.language;
+                this.notifyLanguageChange(this.language);
+                this.notifyMessage(jsonData.message || `Language changed to ${this.language}`);
               } else {
                 // Handle any other message
                 this.notifyMessage(jsonData.message || "");
@@ -132,6 +160,29 @@ export class TutorWebSocket {
       this.notifyMessage(`You asked: ${question}`);
     } else {
       this.notifyError("Cannot send question: not connected to tutor");
+    }
+  }
+
+  public selectLanguage(language: string): void {
+    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+      this.ws.send(JSON.stringify({
+        language: language.toLowerCase()
+      }));
+      console.log(`Language selection sent: ${language}`);
+    } else {
+      this.notifyError("Cannot select language: not connected to tutor");
+    }
+  }
+
+  public changeLanguage(language: string): void {
+    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+      this.ws.send(JSON.stringify({
+        type: "language_change",
+        language: language.toLowerCase()
+      }));
+      console.log(`Language change request sent: ${language}`);
+    } else {
+      this.notifyError("Cannot change language: not connected to tutor");
     }
   }
 
@@ -293,6 +344,10 @@ export class TutorWebSocket {
     return Math.max(0, this.MAX_IMAGES - this.imagesSent);
   }
 
+  public get currentLanguage(): string {
+    return this.language;
+  }
+
   private notifyMessage(message: string): void {
     this.onMessageListeners.forEach(listener => listener(message));
   }
@@ -311,5 +366,9 @@ export class TutorWebSocket {
 
   private notifyImageProcessed(description: string): void {
     this.onImageProcessedListeners.forEach(listener => listener(description));
+  }
+
+  private notifyLanguageChange(language: string): void {
+    this.onLanguageChangeListeners.forEach(listener => listener(language));
   }
 }

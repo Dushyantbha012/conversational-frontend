@@ -1,4 +1,3 @@
-
 export interface UPSCInterviewConfig {
   user_info: {
     name: string;
@@ -9,6 +8,7 @@ export interface UPSCInterviewConfig {
     optional_info?: string;
   };
   num_questions?: number;
+  language?: "english" | "hindi";  // Add language option to config
 }
 
 export interface UPSCInterviewResponse {
@@ -19,6 +19,7 @@ export interface UPSCInterviewResponse {
   feedback?: string;
   setup_info?: any;
   is_final?: boolean;
+  language?: string;  // Add language field
 }
 
 export interface UPSCInterviewSummary {
@@ -53,6 +54,8 @@ export class UPSCInterviewWebSocket {
   private onErrorListeners: ((error: string) => void)[] = [];
   private onSummaryListeners: ((summary: UPSCInterviewSummary) => void)[] = [];
   private onSetupInfoListeners: ((setupInfo: any) => void)[] = [];
+  private onLanguagePromptListeners: ((options: string[]) => void)[] = []; // New listener for language prompt
+  private selectedLanguage: string = "english"; // Default language
 
   constructor(private serverUrl: string = "ws://localhost:8766") {}
 
@@ -76,7 +79,16 @@ export class UPSCInterviewWebSocket {
     this.onSetupInfoListeners.push(listener);
   }
 
+  public addLanguagePromptListener(listener: (options: string[]) => void): void {
+    this.onLanguagePromptListeners.push(listener);
+  }
+
   public configure(config: UPSCInterviewConfig): Promise<void> {
+    // Store language preference if provided in config
+    if (config.language) {
+      this.selectedLanguage = config.language;
+    }
+    
     return new Promise((resolve, reject) => {
       try {
         this.ws = new WebSocket(this.serverUrl);
@@ -100,9 +112,23 @@ export class UPSCInterviewWebSocket {
             try {
               const jsonData = JSON.parse(event.data);
               
-              if (jsonData.status === "ready") {
+              // Handle language selection prompt
+              if (jsonData.status === "language_selection") {
+                console.log("Language selection prompt received:", jsonData);
+                if (jsonData.options && Array.isArray(jsonData.options)) {
+                  this.notifyLanguagePrompt(jsonData.options);
+                }
+                // Don't resolve the promise yet, wait for language selection
+              }
+              else if (jsonData.status === "ready") {
                 this.isConfigured = true;
                 this.notifyStatusChange("ready");
+                
+                // Store language if provided
+                if (jsonData.language) {
+                  this.selectedLanguage = jsonData.language;
+                  console.log(`Language set to: ${this.selectedLanguage}`);
+                }
                 
                 if (jsonData.setup_info) {
                   this.notifySetupInfo(jsonData.setup_info);
@@ -115,6 +141,11 @@ export class UPSCInterviewWebSocket {
               } else if (jsonData.status === "goodbye") {
                 this.isConfigured = false;
                 this.notifyStatusChange("complete");
+                
+                // If language is provided in the goodbye message, update it
+                if (jsonData.language) {
+                  this.selectedLanguage = jsonData.language;
+                }
               } else if (jsonData.status === "summary") {
                 if (jsonData.data) {
                   this.notifySummary(jsonData.data);
@@ -289,6 +320,24 @@ export class UPSCInterviewWebSocket {
     return this.isAudioPaused;
   }
 
+  // Send language preference to the server
+  public selectLanguage(language: string): void {
+    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+      this.selectedLanguage = language.toLowerCase();
+      this.ws.send(JSON.stringify({
+        type: "LANGUAGE_SELECTION",
+        language: this.selectedLanguage
+      }));
+      console.log(`Language preference sent: ${this.selectedLanguage}`);
+    } else {
+      console.error("Cannot send language preference: connection not open");
+    }
+  }
+  
+  public getSelectedLanguage(): string {
+    return this.selectedLanguage;
+  }
+
   private notifyQuestion(question: UPSCInterviewResponse): void {
     this.onQuestionListeners.forEach(listener => listener(question));
   }
@@ -307,5 +356,9 @@ export class UPSCInterviewWebSocket {
 
   private notifySetupInfo(setupInfo: any): void {
     this.onSetupInfoListeners.forEach(listener => listener(setupInfo));
+  }
+
+  private notifyLanguagePrompt(options: string[]): void {
+    this.onLanguagePromptListeners.forEach(listener => listener(options));
   }
 }
